@@ -68,7 +68,7 @@ export const onRequest: PagesHandler = async (context) => {
         task: 'transcribe',
         vad_filter: true,
         initial_prompt:
-          '日本語の会話、会議、打ち合わせです。人名、会社名、製品名を含め、聞こえた内容を省略せず自然な日本語で文字起こししてください。',
+          '日本語の会話、会議、打ち合わせです。映像制作、撮影、編集、企画、納期、品質、取引先、クライアント、マーケティングなどの業務用語や、人名、会社名、製品名を含め、聞こえた内容を省略せず自然な日本語で文字起こししてください。',
         condition_on_previous_text: false,
         no_speech_threshold: 0.55,
       } as any
