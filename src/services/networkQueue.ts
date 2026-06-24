@@ -17,11 +17,18 @@ export class LatestOnlyQueue<T> {
 
   private async drain() {
     this.active = true;
-    while (this.pending !== null) {
-      const nextItem = this.pending;
-      this.pending = null;
-      await this.worker(nextItem);
+    try {
+      while (this.pending !== null) {
+        const nextItem = this.pending;
+        this.pending = null;
+        try {
+          await this.worker(nextItem);
+        } catch (error) {
+          console.error('LatestOnlyQueue worker failed:', error);
+        }
+      }
+    } finally {
+      this.active = false;
     }
-    this.active = false;
   }
 }

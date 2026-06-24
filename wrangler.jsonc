@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "douji-rokuon",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-06-24",
+  "ai": {
+    "binding": "AI"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "RATE_LIMIT",
+      "id": "96d030b1649a4509982601ee1260ac22"
+    }
+  ],
+  "vars": {
+    "TRANSCRIBE_MODEL": "@cf/openai/whisper",
+    "ANALYSIS_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+  }
+}

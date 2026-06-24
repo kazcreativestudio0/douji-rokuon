@@ -1,30 +1,48 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# EchoMap
 
-# Simultaneous Recording App
+会話をリアルタイムで文字起こしし、要約・論理構造マップ・用語解説を生成するWebアプリ。
 
-Vite + React app for realtime conversation visualization.
+## 構成
 
-## Run locally
+- フロントエンド: React + Vite + React Flow
+- バックエンド: Cloudflare Pages Functions
+- 文字起こし: Cloudflare Workers AI（Whisper）
+- 会話解析: Cloudflare Workers AI（Llama 3.3 + JSON Mode）
+- API保護: Cloudflare KVによるIP単位のレート制限
 
-Prerequisites: Node.js 20+
+AI処理はCloudflare内で完結し、ブラウザへAPIキーを配布しない。
 
-1. Install dependencies:
-   `npm install`
-2. Create `.env.local` and set your Gemini key:
-   `VITE_GEMINI_API_KEY=your_key`
-3. Start development server:
-   `npm run dev`
+## ローカル実行
 
-## Build
+前提: Node.js 20以上
 
-`npm run build`
+```bash
+npm install
+npm run dev
+```
 
-## Deploy to Vercel
+Workers AIはCloudflareアカウントへ接続して実行される。`npm run dev:vite`はフロントエンド単体確認用で、`/api/*`は動作しない。
 
-1. Push this project to GitHub.
-2. Import the repository in Vercel.
-3. Add environment variable in Vercel project settings:
-   - `VITE_GEMINI_API_KEY`
-4. Deploy.
+## モデル設定
+
+`wrangler.jsonc`の以下の変数で変更できる。
+
+- `TRANSCRIBE_MODEL`: 既定値は`@cf/openai/whisper`
+- `ANALYSIS_MODEL`: 既定値は`@cf/meta/llama-3.3-70b-instruct-fp8-fast`
+
+## デプロイ
+
+Cloudflare Pagesプロジェクト名は`douji-rokuon`、Productionブランチは`main`。
+
+```bash
+npm run lint
+npm run build
+wrangler pages deploy dist --project-name douji-rokuon --branch main
+```
+
+## 現在の制約
+
+- 録音音声ファイルは保存しない
+- 話者分離は未対応
+- 会話履歴はブラウザを更新すると消える
+- 標準認識はブラウザ依存。対応しない場合は高精度AI認識を使用する

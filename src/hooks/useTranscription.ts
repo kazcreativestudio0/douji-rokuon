@@ -45,31 +45,35 @@ const statusLabels: Record<TranscriptionStatus, string> = {
   fallback: '簡易モード',
 };
 
+const getTranscriptionErrorMessage = (error: unknown) => {
+  const value = error instanceof Error ? error.message : String(error || '');
+  if (/not-allowed|permission|denied/i.test(value)) {
+    return 'マイクの使用が許可されていません。ブラウザのサイト設定でマイクを許可してください。';
+  }
+  if (/not-found|device/i.test(value)) {
+    return '使用できるマイクが見つかりません。';
+  }
+  if (/network/i.test(value)) {
+    return '音声認識の通信に失敗しました。高精度AI認識へ切り替えるか、通信状態を確認してください。';
+  }
+  if (/not available|not supported/i.test(value)) {
+    return 'このブラウザは標準音声認識に対応していません。高精度AI認識を選択してください。';
+  }
+  return '音声認識でエラーが発生しました。設定を確認して再試行してください。';
+};
+
 export function useTranscription(settings: TranscriptionSettings) {
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
   const [interimText, setInterimText] = useState('');
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('idle');
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
   const isRecordingRef = useRef(false);
   const draftFinalBufferRef = useRef('');
   const shortPauseTimerRef = useRef<number | null>(null);
   const longSilenceTimerRef = useRef<number | null>(null);
   const interimGraceTimerRef = useRef<number | null>(null);
   const providerRef = useRef<TranscriptionProvider | null>(null);
-
-  // Simulation Data
-  const simulationData = [
-    { text: "本日は、新しいSaaSプロダクトのロードマップについて話し合いたいと思います。", speaker: "田中", delay: 2000 },
-    { text: "まず、第1四半期の目標はユーザー基盤の拡大です。", speaker: "田中", delay: 3000 },
-    { text: "具体的には、紹介プログラムの導入を検討しています。", speaker: "田中", delay: 2500 },
-    { text: "紹介プログラムのコストはどう見積もっていますか？", speaker: "佐藤", delay: 3000 },
-    { text: "1ユーザー獲得あたり500円程度を想定しています。これはLTVを考えると妥当なラインです。", speaker: "田中", delay: 4000 },
-    { text: "なるほど。LTV（ライフタイムバリュー）の計算根拠も後で確認させてください。", speaker: "佐藤", delay: 3500 },
-    { text: "承知しました。次に、技術的な課題としてスケーラビリティの向上が挙げられます。", speaker: "田中", delay: 4000 },
-  ];
-
-  const simulationIndexRef = useRef(0);
-  const simulationTimeoutRef = useRef<any>(null);
 
   const clearSilenceTimers = useCallback(() => {
     if (shortPauseTimerRef.current) {
@@ -148,26 +152,6 @@ export function useTranscription(settings: TranscriptionSettings) {
     }, LONG_SILENCE_MS);
   }, [flushAllDraft, pushCommittedSegment, syncLiveDraft]);
 
-  const startSimulation = useCallback(() => {
-    simulationIndexRef.current = 0;
-    const next = () => {
-      if (simulationIndexRef.current >= simulationData.length) {
-        setIsRecording(false);
-        return;
-      }
-      const item = simulationData[simulationIndexRef.current];
-      setTranscript(prev => [...prev, {
-        id: Math.random().toString(36).substr(2, 9),
-        text: item.text,
-        speaker: item.speaker,
-        timestamp: Date.now()
-      }]);
-      simulationIndexRef.current++;
-      simulationTimeoutRef.current = setTimeout(next, item.delay);
-    };
-    next();
-  }, []);
-
   const createProvider = useCallback((): TranscriptionProvider => {
     const handlers = {
       onInterim: (text: string) => {
@@ -188,6 +172,7 @@ export function useTranscription(settings: TranscriptionSettings) {
       },
       onError: (error: unknown) => {
         console.error('Transcription provider error', error);
+        setTranscriptionError(getTranscriptionErrorMessage(error));
       },
     };
 
@@ -206,6 +191,7 @@ export function useTranscription(settings: TranscriptionSettings) {
   const startRecording = useCallback(() => {
     draftFinalBufferRef.current = '';
     setInterimText('');
+    setTranscriptionError(null);
     isRecordingRef.current = true;
     setIsRecording(true);
     const provider = createProvider();
@@ -217,6 +203,15 @@ export function useTranscription(settings: TranscriptionSettings) {
       })
       .catch((error) => {
         console.error('Unable to start transcription provider', error);
+        if (settings.transcriptionMode !== 'high-accuracy') {
+          setTranscriptionError(getTranscriptionErrorMessage(error));
+          setTranscriptionStatus('idle');
+          setIsRecording(false);
+          isRecordingRef.current = false;
+          providerRef.current = null;
+          return;
+        }
+
         const fallbackProvider = new BrowserSpeechProvider({
           onInterim: (text) => syncLiveDraft(text),
           onFinal: (text) => {
@@ -231,16 +226,29 @@ export function useTranscription(settings: TranscriptionSettings) {
           onError: (fallbackError) => {
             console.error('Fallback browser provider error', fallbackError);
             setTranscriptionStatus('fallback');
-            startSimulation();
+            setTranscriptionError(
+              '高精度AI認識と標準認識の両方を開始できませんでした。マイク権限と通信状態を確認してください。'
+            );
           },
         });
         providerRef.current = fallbackProvider;
         fallbackProvider.start().catch(() => {
-          setTranscriptionStatus('fallback');
-          startSimulation();
+          setTranscriptionStatus('idle');
+          setIsRecording(false);
+          isRecordingRef.current = false;
+          providerRef.current = null;
+          setTranscriptionError(
+            '音声認識を開始できませんでした。マイク権限と通信状態を確認してください。'
+          );
         });
       });
-  }, [createProvider, flushCommittedByPunctuation, restartActivityTimers, startSimulation, syncLiveDraft]);
+  }, [
+    createProvider,
+    flushCommittedByPunctuation,
+    restartActivityTimers,
+    settings.transcriptionMode,
+    syncLiveDraft,
+  ]);
 
   const stopRecording = useCallback(() => {
     isRecordingRef.current = false;
@@ -249,9 +257,6 @@ export function useTranscription(settings: TranscriptionSettings) {
     flushAllDraft();
     void providerRef.current?.stop();
     providerRef.current = null;
-    if (simulationTimeoutRef.current) {
-      clearTimeout(simulationTimeoutRef.current);
-    }
     setTranscriptionStatus('idle');
   }, [clearSilenceTimers, flushAllDraft]);
 
@@ -267,6 +272,7 @@ export function useTranscription(settings: TranscriptionSettings) {
     isRecording,
     transcript,
     interimText,
+    transcriptionError,
     transcriptionStatus,
     transcriptionStatusLabel: statusLabels[transcriptionStatus],
     startRecording,

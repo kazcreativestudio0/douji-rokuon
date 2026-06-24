@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Mic, 
@@ -11,7 +11,6 @@ import {
   Network, 
   MessageSquare, 
   Lightbulb, 
-  CheckCircle2, 
   BookOpen, 
   ChevronRight,
   RefreshCw,
@@ -21,7 +20,8 @@ import {
   LayoutDashboard,
   FileDown,
   Radio,
-  Wifi
+  Wifi,
+  AlertCircle
 } from 'lucide-react';
 import { useTranscription, TranscriptSegment } from './hooks/useTranscription';
 import { analyzeConversation, getTermDefinition, ConversationNode, InsightData } from './services/aiService';
@@ -72,7 +72,7 @@ const Header = ({
           className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 outline-none focus:border-blue-400 disabled:opacity-50"
         >
           <option value="standard">標準認識</option>
-          <option value="high-accuracy">高精度認識</option>
+          <option value="high-accuracy">高精度AI認識</option>
         </select>
       </label>
       <label className="flex items-center gap-1.5 text-xs text-gray-500">
@@ -145,6 +145,16 @@ const escapeHtml = (value: string) =>
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+
+const normalizePdfFilename = (value: string, fallback: string) => {
+  const cleaned = value
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, ' ')
+    .replace(/[. ]+$/g, '')
+    .trim();
+  const baseName = cleaned || fallback;
+  return baseName.toLowerCase().endsWith('.pdf') ? baseName : `${baseName}.pdf`;
+};
 
 // --- Custom Node Component ---
 
@@ -344,7 +354,8 @@ const MainStream = ({
   onExportPdf,
   selectedNodeId,
   conversationNodes,
-  keyTerms
+  keyTerms,
+  errorMessage,
 }: { 
   transcript: TranscriptSegment[], 
   interimText: string,
@@ -354,10 +365,12 @@ const MainStream = ({
   onExportPdf: () => void,
   selectedNodeId: string | null,
   conversationNodes: ConversationNode[],
-  keyTerms: { term: string }[]
+  keyTerms: { term: string }[],
+  errorMessage?: string | null,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const handleScroll = () => {
     if (!scrollRef.current) return;
@@ -372,6 +385,27 @@ const MainStream = ({
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [transcript, interimText, shouldAutoScroll]);
+
+  useEffect(() => {
+    if (!isRecording) {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isRecording]);
+
+  const elapsedLabel = [
+    Math.floor(elapsedSeconds / 3600),
+    Math.floor((elapsedSeconds % 3600) / 60),
+    elapsedSeconds % 60,
+  ]
+    .map((value) => String(value).padStart(2, '0'))
+    .join(':');
 
   // Find which nodes a segment belongs to and highlight snippets + key terms
   const renderHighlightedText = (seg: TranscriptSegment) => {
@@ -464,6 +498,13 @@ const MainStream = ({
         </div>
       </div>
 
+      {errorMessage && (
+        <div className="mx-4 mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+          <span>{errorMessage}</span>
+        </div>
+      )}
+
       {/* Transcript Area */}
       <div 
         ref={scrollRef}
@@ -539,8 +580,11 @@ const MainStream = ({
                     />
                   ))}
                 </div>
-                <span className="text-xs text-gray-500 font-mono">00:00:00</span>
+                <span className="text-xs text-gray-500 font-mono">{elapsedLabel}</span>
               </div>
+              <p className="mt-1 text-[10px] text-gray-400">
+                音声は文字起こし処理のため送信され、録音ファイルとして保存されません
+              </p>
             </div>
           </div>
           <div className="flex gap-2">
@@ -657,13 +701,14 @@ const InsightPanel = ({ keyTerms, onAddTerm }: { keyTerms: { term: string, defin
 export default function App() {
   const SETTINGS_STORAGE_KEY = 'echo-map-settings';
   const [settings, setSettings] = useState<TranscriptionSettings>({
-    transcriptionMode: 'standard',
+    transcriptionMode: 'high-accuracy',
     networkMode: 'balanced',
   });
   const {
     isRecording,
     transcript,
     interimText,
+    transcriptionError,
     transcriptionStatusLabel,
     startRecording,
     stopRecording,
@@ -676,12 +721,21 @@ export default function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisStatusLabel, setAnalysisStatusLabel] = useState('解析待機');
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const lastAnalyzedIndex = useRef(0);
   const lastAnalyzeAtRef = useRef(0);
   const analyzeDelayTimerRef = useRef<number | null>(null);
+  const analyzeRetryTimerRef = useRef<number | null>(null);
   const latestTranscriptRef = useRef(transcript);
   const latestNodesRef = useRef(insights.nodes);
-  const analysisQueueRef = useRef<LatestOnlyQueue<{ fullText: string; transcriptLength: number; currentNodes: ConversationNode[] }> | null>(null);
+  const latestSummaryRef = useRef(insights.summary);
+  const enqueueLatestAnalysisRef = useRef<(force?: boolean) => void>(() => {});
+  const analysisQueueRef = useRef<LatestOnlyQueue<{
+    fullText: string;
+    transcriptLength: number;
+    currentNodes: ConversationNode[];
+    rollingSummary: string;
+  }> | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
@@ -689,8 +743,14 @@ export default function App() {
     try {
       const parsed = JSON.parse(saved) as Partial<TranscriptionSettings>;
       setSettings(prev => ({
-        transcriptionMode: parsed.transcriptionMode === 'high-accuracy' ? 'high-accuracy' : prev.transcriptionMode,
-        networkMode: parsed.networkMode === 'low-bandwidth' ? 'low-bandwidth' : prev.networkMode,
+        transcriptionMode:
+          parsed.transcriptionMode === 'standard' || parsed.transcriptionMode === 'high-accuracy'
+            ? parsed.transcriptionMode
+            : prev.transcriptionMode,
+        networkMode:
+          parsed.networkMode === 'balanced' || parsed.networkMode === 'low-bandwidth'
+            ? parsed.networkMode
+            : prev.networkMode,
       }));
     } catch {
       // Ignore malformed saved settings.
@@ -709,6 +769,10 @@ export default function App() {
     latestNodesRef.current = insights.nodes;
   }, [insights.nodes]);
 
+  useEffect(() => {
+    latestSummaryRef.current = insights.summary;
+  }, [insights.summary]);
+
   const getAnalyzeMinInterval = useCallback(
     () => (settings.networkMode === 'low-bandwidth' ? 14000 : 8000),
     [settings.networkMode]
@@ -719,27 +783,51 @@ export default function App() {
     [settings.networkMode]
   );
 
+  const getAnalyzeContextSegments = useCallback(
+    () => (settings.networkMode === 'low-bandwidth' ? 12 : 20),
+    [settings.networkMode]
+  );
+
+  const getAnalyzeContextNodes = useCallback(
+    () => (settings.networkMode === 'low-bandwidth' ? 40 : 70),
+    [settings.networkMode]
+  );
+
   if (!analysisQueueRef.current) {
-    analysisQueueRef.current = new LatestOnlyQueue(async ({ fullText, transcriptLength, currentNodes }) => {
+    analysisQueueRef.current = new LatestOnlyQueue(async ({ fullText, transcriptLength, currentNodes, rollingSummary }) => {
       if (!fullText) return;
+      if (analyzeRetryTimerRef.current) {
+        window.clearTimeout(analyzeRetryTimerRef.current);
+        analyzeRetryTimerRef.current = null;
+      }
       setIsAnalyzing(true);
       setAnalysisStatusLabel('解析中');
       lastAnalyzeAtRef.current = Date.now();
       try {
-        const result = await analyzeConversation(fullText, currentNodes);
+        const result = await analyzeConversation(fullText, currentNodes, rollingSummary);
         if (result) {
+          const normalizedNodes = result.nodes.slice(0, getAnalyzeContextNodes());
           setInsights(prev => ({
             summary: result.summary,
-            nodes: result.nodes,
+            nodes: normalizedNodes,
             keyTerms: [...prev.keyTerms, ...result.keyTerms.filter(t => !prev.keyTerms.find(pt => pt.term === t.term))]
           }));
+          latestSummaryRef.current = result.summary;
+          latestNodesRef.current = normalizedNodes;
           lastAnalyzedIndex.current = transcriptLength;
           setAnalysisStatusLabel('最新反映済み');
+          setAnalysisError(null);
         } else {
-          setAnalysisStatusLabel('解析待機');
+          setAnalysisStatusLabel('解析再試行待ち');
+          analyzeRetryTimerRef.current = window.setTimeout(() => enqueueLatestAnalysisRef.current(true), getAnalyzeMinInterval());
         }
-      } catch {
+      } catch (error) {
+        const message = error instanceof Error
+          ? error.message
+          : '会話解析に失敗しました。時間を置いて再試行してください。';
+        setAnalysisError(message);
         setAnalysisStatusLabel('解析再試行中');
+        analyzeRetryTimerRef.current = window.setTimeout(() => enqueueLatestAnalysisRef.current(true), getAnalyzeMinInterval());
       } finally {
         setIsAnalyzing(false);
       }
@@ -751,6 +839,10 @@ export default function App() {
       window.clearTimeout(analyzeDelayTimerRef.current);
       analyzeDelayTimerRef.current = null;
     }
+    if (force && analyzeRetryTimerRef.current) {
+      window.clearTimeout(analyzeRetryTimerRef.current);
+      analyzeRetryTimerRef.current = null;
+    }
 
     const currentTranscript = latestTranscriptRef.current;
     if (currentTranscript.length === 0) return;
@@ -761,13 +853,30 @@ export default function App() {
 
     const run = () => {
       const nextTranscript = latestTranscriptRef.current;
-      const fullText = nextTranscript
+      const maxSegments = getAnalyzeContextSegments();
+      const maxNodes = getAnalyzeContextNodes();
+      const trimmedTranscript = nextTranscript.slice(-maxSegments);
+      const omittedTranscriptCount = nextTranscript.length - trimmedTranscript.length;
+      const transcriptLines = trimmedTranscript
         .map(t => `[ID:${t.id}] ${getSegmentSummaryLabel(t.text)}: ${t.text}`)
         .join('\n');
+      const fullText = omittedTranscriptCount > 0
+        ? `注記: 古い発言 ${omittedTranscriptCount} 件は省略。\n${transcriptLines}`
+        : transcriptLines;
+      const compactNodes = latestNodesRef.current
+        .slice(-maxNodes)
+        .map((node) => ({
+          ...node,
+          text: node.text.slice(0, 240),
+          sourceTextSnippet: node.sourceTextSnippet?.slice(0, 120),
+          sourceSegmentIds: node.sourceSegmentIds?.slice(-3),
+        }));
+
       analysisQueueRef.current?.enqueue({
         fullText,
         transcriptLength: nextTranscript.length,
-        currentNodes: latestNodesRef.current,
+        currentNodes: compactNodes,
+        rollingSummary: latestSummaryRef.current,
       });
       setAnalysisStatusLabel('解析待ち');
     };
@@ -778,10 +887,14 @@ export default function App() {
     }
 
     analyzeDelayTimerRef.current = window.setTimeout(run, waitMs);
-  }, [getAnalyzeMinInterval]);
+  }, [getAnalyzeContextNodes, getAnalyzeContextSegments, getAnalyzeMinInterval]);
 
   const handleManualRefresh = useCallback((force = false) => {
     enqueueLatestAnalysis(force);
+  }, [enqueueLatestAnalysis]);
+
+  useEffect(() => {
+    enqueueLatestAnalysisRef.current = enqueueLatestAnalysis;
   }, [enqueueLatestAnalysis]);
 
   // Analyze conversation every 3 segments
@@ -800,6 +913,9 @@ export default function App() {
       if (analyzeDelayTimerRef.current) {
         window.clearTimeout(analyzeDelayTimerRef.current);
       }
+      if (analyzeRetryTimerRef.current) {
+        window.clearTimeout(analyzeRetryTimerRef.current);
+      }
     };
   }, []);
 
@@ -808,17 +924,27 @@ export default function App() {
   };
 
   const handleManualAddTerm = async (term: string) => {
-    const result = await getTermDefinition(term);
-    if (result) {
+    try {
+      const result = await getTermDefinition(term);
       setInsights(prev => ({
         ...prev,
         keyTerms: [result, ...prev.keyTerms.filter(t => t.term !== result.term)]
       }));
+      setAnalysisError(null);
+    } catch (error) {
+      setAnalysisError(
+        error instanceof Error ? error.message : '用語解説の取得に失敗しました。'
+      );
     }
   };
 
   const handleExportPdf = async () => {
     if (transcript.length === 0) return;
+
+    const defaultFileName = `会話記録-${new Date().toISOString().slice(0, 10)}`;
+    const requestedFileName = window.prompt('PDFのファイル名を入力してください', defaultFileName);
+    if (requestedFileName === null) return;
+    const pdfFileName = normalizePdfFilename(requestedFileName, defaultFileName);
 
     const pdfRoot = document.createElement('div');
     pdfRoot.style.padding = '28px';
@@ -872,7 +998,7 @@ export default function App() {
       await html2pdf()
         .set({
           margin: 0.5,
-          filename: `conversation-summary-${new Date().toISOString().slice(0, 10)}.pdf`,
+          filename: pdfFileName,
           image: { type: 'jpeg', quality: 0.98 },
           html2canvas: { scale: 2, useCORS: true },
           jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
@@ -904,7 +1030,7 @@ export default function App() {
                 selectedNodeId={selectedNodeId}
                 onNodeSelect={setSelectedNodeId}
                 isAnalyzing={isAnalyzing}
-                onRefresh={handleManualRefresh}
+                onRefresh={() => handleManualRefresh(true)}
               />
             </div>
           </Panel>
@@ -924,6 +1050,7 @@ export default function App() {
                 selectedNodeId={selectedNodeId}
                 conversationNodes={insights.nodes}
                 keyTerms={insights.keyTerms}
+                errorMessage={transcriptionError || analysisError}
               />
             </div>
           </Panel>
