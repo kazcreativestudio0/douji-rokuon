@@ -2,6 +2,7 @@ import {
   ensurePost,
   ensureSameOrigin,
   enforceRateLimit,
+  getStructuredAiResponse,
   handleFunctionError,
   json,
   PagesHandler,
@@ -103,7 +104,7 @@ export const onRequest: PagesHandler = async (context) => {
     const rollingSummary = (payload.rollingSummary || '').slice(0, 2_000);
 
     const result = await context.env.AI.run(
-      (context.env.ANALYSIS_MODEL || '@cf/openai/gpt-oss-20b') as any,
+      (context.env.ANALYSIS_MODEL || '@cf/qwen/qwen3-30b-a3b-fp8') as any,
       {
         messages: [
           {
@@ -141,9 +142,7 @@ export const onRequest: PagesHandler = async (context) => {
       } as any
     ) as any;
 
-    const insight = typeof result?.response === 'string'
-      ? JSON.parse(result.response)
-      : result?.response;
+    const insight = getStructuredAiResponse(result) as any;
     if (
       !insight ||
       typeof insight !== 'object' ||

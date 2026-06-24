@@ -2,6 +2,7 @@ import {
   ensurePost,
   ensureSameOrigin,
   enforceRateLimit,
+  getStructuredAiResponse,
   handleFunctionError,
   json,
   PagesHandler,
@@ -37,7 +38,7 @@ export const onRequest: PagesHandler = async (context) => {
     }
 
     const result = await context.env.AI.run(
-      (context.env.ANALYSIS_MODEL || '@cf/openai/gpt-oss-20b') as any,
+      (context.env.ANALYSIS_MODEL || '@cf/qwen/qwen3-30b-a3b-fp8') as any,
       {
         messages: [
           {
@@ -56,9 +57,7 @@ export const onRequest: PagesHandler = async (context) => {
       } as any
     ) as any;
 
-    const definition = typeof result?.response === 'string'
-      ? JSON.parse(result.response)
-      : result?.response;
+    const definition = getStructuredAiResponse(result);
     if (!definition || typeof definition !== 'object') {
       throw new RequestError('用語解説の応答が空でした。', 502);
     }

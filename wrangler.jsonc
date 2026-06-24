@@ -14,6 +14,6 @@
   ],
   "vars": {
     "TRANSCRIBE_MODEL": "@cf/openai/whisper",
-    "ANALYSIS_MODEL": "@cf/openai/gpt-oss-20b"
+    "ANALYSIS_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8"
   }
 }

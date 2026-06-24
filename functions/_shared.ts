@@ -112,3 +112,15 @@ export const handleFunctionError = (error: unknown) => {
   console.error('EchoMap function error:', error);
   return json({ error: 'サーバー処理に失敗しました。時間を置いて再試行してください。' }, 500);
 };
+
+export const getStructuredAiResponse = (result: any): unknown => {
+  const candidate =
+    result?.response ??
+    result?.choices?.[0]?.message?.content ??
+    result?.choices?.[0]?.text;
+
+  if (typeof candidate === 'string') {
+    return JSON.parse(candidate);
+  }
+  return candidate;
+};
