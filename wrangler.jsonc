@@ -13,7 +13,7 @@
     }
   ],
   "vars": {
-    "TRANSCRIBE_MODEL": "@cf/openai/whisper",
+    "TRANSCRIBE_MODEL": "@cf/openai/whisper-large-v3-turbo",
     "ANALYSIS_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8"
   }
 }

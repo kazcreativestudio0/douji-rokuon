@@ -61,9 +61,16 @@ export const onRequest: PagesHandler = async (context) => {
     }
 
     const result = await context.env.AI.run(
-      (context.env.TRANSCRIBE_MODEL || '@cf/openai/whisper') as any,
+      (context.env.TRANSCRIBE_MODEL || '@cf/openai/whisper-large-v3-turbo') as any,
       {
-        audio: Array.from(audioBuffer),
+        audio: base64Audio,
+        language: 'ja',
+        task: 'transcribe',
+        vad_filter: true,
+        initial_prompt:
+          '日本語の会話、会議、打ち合わせです。人名、会社名、製品名を含め、聞こえた内容を省略せず自然な日本語で文字起こししてください。',
+        condition_on_previous_text: false,
+        no_speech_threshold: 0.55,
       } as any
     ) as any;
 

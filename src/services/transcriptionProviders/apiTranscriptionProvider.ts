@@ -1,4 +1,4 @@
-import { LatestOnlyQueue } from '../networkQueue';
+import { SequentialQueue } from '../networkQueue';
 import {
   NetworkMode,
   TranscriptionProvider,
@@ -19,24 +19,28 @@ const blobToBase64 = async (blob: Blob) => {
   return btoa(binary);
 };
 
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 interface QueueItem {
   mimeType: string;
-  base64Audio: string;
+  audio: Blob;
 }
 
 export class ApiTranscriptionProvider implements TranscriptionProvider {
   private stream: MediaStream | null = null;
   private mediaRecorder: MediaRecorder | null = null;
   private active = false;
-  private retryBuffer: QueueItem | null = null;
-  private consecutiveFailures = 0;
-  private queue: LatestOnlyQueue<QueueItem>;
+  private segmentTimer: number | null = null;
+  private currentSegmentStopped: Promise<void> | null = null;
+  private resolveCurrentSegmentStopped: (() => void) | null = null;
+  private preferredMimeType: string | undefined;
+  private queue: SequentialQueue<QueueItem>;
 
   constructor(
     private readonly handlers: TranscriptionProviderHandlers,
     private readonly networkMode: NetworkMode
   ) {
-    this.queue = new LatestOnlyQueue(async (item) => {
+    this.queue = new SequentialQueue(async (item) => {
       await this.sendChunk(item);
     });
   }
@@ -46,93 +50,143 @@ export class ApiTranscriptionProvider implements TranscriptionProvider {
       throw new Error('Audio recording for high accuracy mode is not supported.');
     }
 
-    this.active = true;
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const preferredMimeType = [
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    this.preferredMimeType = [
       'audio/webm;codecs=opus',
       'audio/webm',
       'audio/mp4',
     ].find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
 
-    this.mediaRecorder = preferredMimeType
-      ? new MediaRecorder(this.stream, { mimeType: preferredMimeType })
-      : new MediaRecorder(this.stream);
-
-    this.mediaRecorder.ondataavailable = async (event) => {
-      if (!this.active || !event.data || event.data.size === 0) return;
-      this.handlers.onActivity();
-      this.handlers.onStatusChange('processing');
-      this.handlers.onInterim('AIで文字起こし中...');
-      const base64Audio = await blobToBase64(event.data);
-      this.queue.enqueue({
-        mimeType: event.data.type || preferredMimeType || 'audio/webm',
-        base64Audio,
-      });
-    };
-
-    this.mediaRecorder.onerror = (event) => {
-      this.handlers.onError((event as any).error || event);
-    };
-
+    this.active = true;
     this.handlers.onStatusChange('listening');
-    this.mediaRecorder.start(this.networkMode === 'low-bandwidth' ? 8000 : 4500);
+    this.startSegmentRecorder();
   }
 
   async stop() {
     this.active = false;
-    this.queue.clear();
-    this.retryBuffer = null;
-    this.consecutiveFailures = 0;
+    if (this.segmentTimer !== null) {
+      window.clearTimeout(this.segmentTimer);
+      this.segmentTimer = null;
+    }
+
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       this.mediaRecorder.stop();
+      await this.currentSegmentStopped;
     }
+
     this.mediaRecorder = null;
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;
+
+    if (this.queue.size > 0) {
+      this.handlers.onStatusChange('processing');
+      await this.queue.whenIdle();
+    }
+
     this.handlers.onInterim('');
     this.handlers.onStatusChange('idle');
   }
 
+  private startSegmentRecorder() {
+    if (!this.active || !this.stream) return;
+
+    const chunks: Blob[] = [];
+    const recorder = this.preferredMimeType
+      ? new MediaRecorder(this.stream, { mimeType: this.preferredMimeType })
+      : new MediaRecorder(this.stream);
+    this.mediaRecorder = recorder;
+    this.currentSegmentStopped = new Promise<void>((resolve) => {
+      this.resolveCurrentSegmentStopped = resolve;
+    });
+
+    recorder.ondataavailable = (event) => {
+      if (event.data?.size) chunks.push(event.data);
+    };
+
+    recorder.onerror = (event) => {
+      this.handlers.onError((event as any).error || event);
+    };
+
+    recorder.onstop = () => {
+      if (this.segmentTimer !== null) {
+        window.clearTimeout(this.segmentTimer);
+        this.segmentTimer = null;
+      }
+
+      const mimeType =
+        recorder.mimeType ||
+        chunks[0]?.type ||
+        this.preferredMimeType ||
+        'audio/webm';
+      const audio = new Blob(chunks, { type: mimeType });
+      if (audio.size >= 1_000) {
+        this.handlers.onActivity();
+        this.handlers.onStatusChange('processing');
+        this.queue.enqueue({ mimeType, audio });
+      }
+
+      this.resolveCurrentSegmentStopped?.();
+      this.resolveCurrentSegmentStopped = null;
+      this.currentSegmentStopped = null;
+      this.mediaRecorder = null;
+
+      if (this.active) {
+        this.startSegmentRecorder();
+      }
+    };
+
+    recorder.start();
+    const segmentDurationMs = this.networkMode === 'low-bandwidth' ? 15_000 : 10_000;
+    this.segmentTimer = window.setTimeout(() => {
+      if (recorder.state === 'recording') recorder.stop();
+    }, segmentDurationMs);
+  }
+
   private async sendChunk(item: QueueItem) {
-    try {
-      const response = await fetch('/api/transcribe-audio', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(item),
-      });
+    const base64Audio = await blobToBase64(item.audio);
 
-      if (!response.ok) {
-        const result = await response.json().catch(() => null) as any;
-        throw new Error(result?.error || `Transcription API returned ${response.status}`);
-      }
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const response = await fetch('/api/transcribe-audio', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            mimeType: item.mimeType,
+            base64Audio,
+          }),
+        });
 
-      const result = await response.json() as any;
-      const text = typeof result.text === 'string' ? result.text.trim() : '';
-      if (text) {
-        this.handlers.onFinal(text);
-      }
-      this.retryBuffer = null;
-      this.consecutiveFailures = 0;
-      this.handlers.onInterim('');
-      this.handlers.onStatusChange('listening');
-    } catch (error) {
-      this.consecutiveFailures += 1;
-      this.retryBuffer = item;
-      this.handlers.onError(error);
-      this.handlers.onStatusChange('waiting-network');
-      if (this.consecutiveFailures >= 3) {
-        this.handlers.onInterim('AI文字起こしに接続できません。標準認識に切り替えるか、少し待って再開してください。');
-        this.retryBuffer = null;
-        this.consecutiveFailures = 0;
-        return;
-      }
-      window.setTimeout(() => {
-        if (this.active && this.retryBuffer) {
-          this.queue.enqueue(this.retryBuffer);
+        if (!response.ok) {
+          const result = await response.json().catch(() => null) as any;
+          throw new Error(result?.error || `Transcription API returned ${response.status}`);
         }
-      }, 2000);
+
+        const result = await response.json() as any;
+        const text = typeof result.text === 'string' ? result.text.trim() : '';
+        if (text) {
+          this.handlers.onFinal(text);
+        }
+        this.handlers.onInterim('');
+        this.handlers.onStatusChange(this.active ? 'listening' : 'processing');
+        return;
+      } catch (error) {
+        this.handlers.onError(error);
+        if (attempt === 3) {
+          this.handlers.onStatusChange('waiting-network');
+          return;
+        }
+        this.handlers.onStatusChange('waiting-network');
+        await wait(1_500 * attempt);
+      }
     }
   }
 }

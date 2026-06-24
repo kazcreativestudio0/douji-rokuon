@@ -356,6 +356,7 @@ const MainStream = ({
   conversationNodes,
   keyTerms,
   errorMessage,
+  transcriptionMode,
 }: { 
   transcript: TranscriptSegment[], 
   interimText: string,
@@ -367,6 +368,7 @@ const MainStream = ({
   conversationNodes: ConversationNode[],
   keyTerms: { term: string }[],
   errorMessage?: string | null,
+  transcriptionMode: TranscriptionMode,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
@@ -583,7 +585,9 @@ const MainStream = ({
                 <span className="text-xs text-gray-500 font-mono">{elapsedLabel}</span>
               </div>
               <p className="mt-1 text-[10px] text-gray-400">
-                音声は文字起こし処理のため送信され、録音ファイルとして保存されません
+                {transcriptionMode === 'high-accuracy'
+                  ? '最初の文字反映まで約10〜20秒です。音声ファイルは保存されません'
+                  : 'ブラウザの音声認識でリアルタイムに反映します'}
               </p>
             </div>
           </div>
@@ -1051,6 +1055,7 @@ export default function App() {
                 conversationNodes={insights.nodes}
                 keyTerms={insights.keyTerms}
                 errorMessage={transcriptionError || analysisError}
+                transcriptionMode={settings.transcriptionMode}
               />
             </div>
           </Panel>

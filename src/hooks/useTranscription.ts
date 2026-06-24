@@ -160,6 +160,13 @@ export function useTranscription(settings: TranscriptionSettings) {
       onFinal: (text: string) => {
         const cleaned = text.replace(/\s+/g, ' ').trim();
         if (!cleaned) return;
+        setTranscriptionError(null);
+        if (settings.transcriptionMode === 'high-accuracy') {
+          pushCommittedSegment(cleaned);
+          draftFinalBufferRef.current = '';
+          setInterimText('');
+          return;
+        }
         draftFinalBufferRef.current = appendChunk(draftFinalBufferRef.current, cleaned);
         flushCommittedByPunctuation();
         syncLiveDraft();
@@ -185,6 +192,7 @@ export function useTranscription(settings: TranscriptionSettings) {
     restartActivityTimers,
     settings.networkMode,
     settings.transcriptionMode,
+    pushCommittedSegment,
     syncLiveDraft,
   ]);
 
