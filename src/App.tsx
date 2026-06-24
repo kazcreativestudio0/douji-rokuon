@@ -586,7 +586,7 @@ const MainStream = ({
               </div>
               <p className="mt-1 text-[10px] text-gray-400">
                 {transcriptionMode === 'high-accuracy'
-                  ? '最初の文字反映まで約10〜20秒です。音声ファイルは保存されません'
+                  ? '約1分ごとに文字が反映されます。停止時は残りの音声も処理します'
                   : 'ブラウザの音声認識でリアルタイムに反映します'}
               </p>
             </div>

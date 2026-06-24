@@ -98,9 +98,13 @@ export class ApiTranscriptionProvider implements TranscriptionProvider {
     if (!this.active || !this.stream) return;
 
     const chunks: Blob[] = [];
-    const recorder = this.preferredMimeType
-      ? new MediaRecorder(this.stream, { mimeType: this.preferredMimeType })
-      : new MediaRecorder(this.stream);
+    const recorderOptions: MediaRecorderOptions = {
+      audioBitsPerSecond: this.networkMode === 'low-bandwidth' ? 32_000 : 64_000,
+    };
+    if (this.preferredMimeType) {
+      recorderOptions.mimeType = this.preferredMimeType;
+    }
+    const recorder = new MediaRecorder(this.stream, recorderOptions);
     this.mediaRecorder = recorder;
     this.currentSegmentStopped = new Promise<void>((resolve) => {
       this.resolveCurrentSegmentStopped = resolve;
@@ -143,7 +147,7 @@ export class ApiTranscriptionProvider implements TranscriptionProvider {
     };
 
     recorder.start();
-    const segmentDurationMs = this.networkMode === 'low-bandwidth' ? 15_000 : 10_000;
+    const segmentDurationMs = 60_000;
     this.segmentTimer = window.setTimeout(() => {
       if (recorder.state === 'recording') recorder.stop();
     }, segmentDurationMs);
