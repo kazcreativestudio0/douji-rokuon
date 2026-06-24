@@ -64,10 +64,6 @@ export const onRequest: PagesHandler = async (context) => {
       (context.env.TRANSCRIBE_MODEL || '@cf/openai/whisper') as any,
       {
         audio: Array.from(audioBuffer),
-        task: 'transcribe',
-        language: 'ja',
-        initial_prompt:
-          '日本語の会話、会議、打ち合わせです。聞こえた発話を自然な日本語で文字起こししてください。',
       } as any
     ) as any;
 
