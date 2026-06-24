@@ -37,7 +37,7 @@ export const onRequest: PagesHandler = async (context) => {
     }
 
     const result = await context.env.AI.run(
-      (context.env.ANALYSIS_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast') as any,
+      (context.env.ANALYSIS_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast') as any,
       {
         messages: [
           {
@@ -56,11 +56,13 @@ export const onRequest: PagesHandler = async (context) => {
       } as any
     ) as any;
 
-    const outputText = typeof result?.response === 'string' ? result.response : '';
-    if (!outputText) {
+    const definition = typeof result?.response === 'string'
+      ? JSON.parse(result.response)
+      : result?.response;
+    if (!definition || typeof definition !== 'object') {
       throw new RequestError('用語解説の応答が空でした。', 502);
     }
-    return json(JSON.parse(outputText));
+    return json(definition);
   } catch (error) {
     return handleFunctionError(error);
   }

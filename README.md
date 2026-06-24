@@ -7,7 +7,7 @@
 - フロントエンド: React + Vite + React Flow
 - バックエンド: Cloudflare Pages Functions
 - 文字起こし: Cloudflare Workers AI（Whisper）
-- 会話解析: Cloudflare Workers AI（Llama 3.3 + JSON Mode）
+- 会話解析: Cloudflare Workers AI（Llama 3.1 Fast + JSON Mode）
 - API保護: Cloudflare KVによるIP単位のレート制限
 
 AI処理はCloudflare内で完結し、ブラウザへAPIキーを配布しない。
@@ -28,7 +28,7 @@ Workers AIはCloudflareアカウントへ接続して実行される。`npm run 
 `wrangler.jsonc`の以下の変数で変更できる。
 
 - `TRANSCRIBE_MODEL`: 既定値は`@cf/openai/whisper`
-- `ANALYSIS_MODEL`: 既定値は`@cf/meta/llama-3.3-70b-instruct-fp8-fast`
+- `ANALYSIS_MODEL`: 既定値は`@cf/meta/llama-3.1-8b-instruct-fast`
 
 ## デプロイ
 

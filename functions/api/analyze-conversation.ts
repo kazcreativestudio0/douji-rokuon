@@ -103,7 +103,7 @@ export const onRequest: PagesHandler = async (context) => {
     const rollingSummary = (payload.rollingSummary || '').slice(0, 2_000);
 
     const result = await context.env.AI.run(
-      (context.env.ANALYSIS_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast') as any,
+      (context.env.ANALYSIS_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast') as any,
       {
         messages: [
           {
@@ -136,17 +136,17 @@ export const onRequest: PagesHandler = async (context) => {
           type: 'json_schema',
           json_schema: insightSchema,
         },
-        max_tokens: 5_000,
+        max_tokens: 3_500,
         temperature: 0.1,
       } as any
     ) as any;
 
-    const outputText = typeof result?.response === 'string' ? result.response : '';
-    if (!outputText) {
+    const insight = typeof result?.response === 'string'
+      ? JSON.parse(result.response)
+      : result?.response;
+    if (!insight || typeof insight !== 'object') {
       throw new RequestError('会話解析の応答が空でした。', 502);
     }
-
-    const insight = JSON.parse(outputText) as any;
     return json({
       summary: insight.summary,
       nodes: insight.nodes.map((node: any) => ({
