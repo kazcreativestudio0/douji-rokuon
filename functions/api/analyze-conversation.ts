@@ -103,7 +103,7 @@ export const onRequest: PagesHandler = async (context) => {
     const rollingSummary = (payload.rollingSummary || '').slice(0, 2_000);
 
     const result = await context.env.AI.run(
-      (context.env.ANALYSIS_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast') as any,
+      (context.env.ANALYSIS_MODEL || '@cf/openai/gpt-oss-20b') as any,
       {
         messages: [
           {
@@ -144,8 +144,15 @@ export const onRequest: PagesHandler = async (context) => {
     const insight = typeof result?.response === 'string'
       ? JSON.parse(result.response)
       : result?.response;
-    if (!insight || typeof insight !== 'object') {
-      throw new RequestError('会話解析の応答が空でした。', 502);
+    if (
+      !insight ||
+      typeof insight !== 'object' ||
+      typeof insight.summary !== 'string' ||
+      insight.summary.replace(/[、。,\s]/g, '').length < 5 ||
+      !Array.isArray(insight.nodes) ||
+      insight.nodes.length === 0
+    ) {
+      throw new RequestError('会話解析で有効な構造を生成できませんでした。', 502);
     }
     return json({
       summary: insight.summary,

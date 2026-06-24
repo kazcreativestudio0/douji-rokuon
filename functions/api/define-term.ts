@@ -37,7 +37,7 @@ export const onRequest: PagesHandler = async (context) => {
     }
 
     const result = await context.env.AI.run(
-      (context.env.ANALYSIS_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast') as any,
+      (context.env.ANALYSIS_MODEL || '@cf/openai/gpt-oss-20b') as any,
       {
         messages: [
           {
