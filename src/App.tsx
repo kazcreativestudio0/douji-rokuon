@@ -703,7 +703,7 @@ const InsightPanel = ({ keyTerms, onAddTerm }: { keyTerms: { term: string, defin
 // --- Main App ---
 
 export default function App() {
-  const SETTINGS_STORAGE_KEY = 'echo-map-settings';
+  const SETTINGS_STORAGE_KEY = 'echo-map-settings-v2';
   const [settings, setSettings] = useState<TranscriptionSettings>({
     transcriptionMode: 'high-accuracy',
     networkMode: 'balanced',
